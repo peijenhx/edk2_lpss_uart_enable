@@ -7,6 +7,7 @@
 **/
 #include <PiDxe.h>
 #include <Base.h>
+#include <Uefi.h>
 #include <Library/PcdLib.h>
 #include <Library/IoLib.h>
 #include <Library/BaseLib.h>
@@ -53,6 +54,8 @@ typedef struct {
 
 UART_INFO  mUartInfo[MAX_SIZE];
 UINT8      mUartCount = 0;
+EFI_EVENT  mBaseSerialPortLibHobExitBootServicesEvent;
+BOOLEAN    mBaseSerialPortLibHobAtRuntime = FALSE;
 
 /**
   Reads an 8-bit register. If UseMmio is TRUE, then the value is read from
@@ -285,6 +288,11 @@ SerialPortWrite (
     UseMmio     = mUartInfo[Count].UseMmio;
     Stride      = mUartInfo[Count].RegisterStride;
 
+    if (UseMmio && mBaseSerialPortLibHobAtRuntime) {
+      Count++;
+      continue;
+    }
+
     if (BaseAddress == 0) {
       Count++;
       continue;
@@ -299,6 +307,7 @@ SerialPortWrite (
       // and shift register empty.
       //
       while ((SerialPortReadRegister (BaseAddress, R_UART_LSR, UseMmio, Stride) & B_UART_LSR_TXRDY) == 0);
+
       //
       // Fill the entire Tx FIFO
       //
@@ -846,4 +855,48 @@ SerialPortSetAttributes (
   }
 
   return RETURN_SUCCESS;
+}
+
+/**
+  Set mSerialIoUartLibAtRuntime flag as TRUE after ExitBootServices.
+
+  @param[in]  Event   The Event that is being processed.
+  @param[in]  Context The Event Context.
+
+**/
+STATIC
+VOID
+EFIAPI
+BaseSerialPortLibHobExitBootServicesEvent (
+  IN EFI_EVENT        Event,
+  IN VOID             *Context
+  )
+{
+  mBaseSerialPortLibHobAtRuntime = TRUE;
+}
+
+/**
+  The constructor function registers a callback for the ExitBootServices event.
+
+  @param[in]  ImageHandle   The firmware allocated handle for the EFI image.
+  @param[in]  SystemTable   A pointer to the EFI System Table.
+
+  @retval EFI_SUCCESS   The operation completed successfully.
+  @retval other         Either the serial port failed to initialize or the
+                        ExitBootServices event callback registration failed.
+**/
+EFI_STATUS
+EFIAPI
+DxeBaseSerialPortLibHobConstructor (
+  IN EFI_HANDLE        ImageHandle,
+  IN EFI_SYSTEM_TABLE  *SystemTable
+  )
+{
+  return SystemTable->BootServices->CreateEvent (
+                                      EVT_SIGNAL_EXIT_BOOT_SERVICES,
+                                      TPL_NOTIFY,
+                                      BaseSerialPortLibHobExitBootServicesEvent,
+                                      NULL,
+                                      &mBaseSerialPortLibHobExitBootServicesEvent
+                                      );
 }
